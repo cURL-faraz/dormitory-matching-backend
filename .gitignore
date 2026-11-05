@@ -1,0 +1,14 @@
+.env
+
+# Python generated files
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
+
+# Personal editor settings
+.vscode/settings.json
+
+# Personal Claude Code settings
+.claude/settings.local.json
