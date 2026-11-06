@@ -1,0 +1,6 @@
+from fastapi import FastAPI
+from app.api.routes import health
+
+app = FastAPI(title="Dormitory Matching API")
+
+app.include_router(health.router)
