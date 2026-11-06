@@ -118,6 +118,29 @@
 - **Consequences:** **Before any deployment**, production requires an owner/migration role (DDL in its schema, used by Alembic) and a runtime role for the app (`SELECT`/`INSERT`/`UPDATE`/`DELETE` on app tables and `USAGE` on sequences, with no DDL, no role or database management, and no server-file or program access). `postgres` is for administrators only. Tracked as I-2.
 - **Scope:** The principle is broadly reusable; the timing is project-specific.
 
+### D-113: Async engine and per-request session
+- **Status:** Accepted
+- **Date:** 2026-11-06
+- **Context / problem:** The app needs database access that is shared efficiently across requests but isolated per request.
+- **Alternatives:** An engine per request; one shared session; one module-level engine plus a session per request through a FastAPI dependency.
+- **Trade-offs:** An engine per request rebuilds the connection pool every time. A shared session is unsafe under concurrency. A per-request session costs a small factory call.
+- **Decision:** One module-level `create_async_engine` in `app/db/session.py` with `pool_pre_ping=True` and `connect_args={"timeout": 5}`. An `async_sessionmaker` with `expire_on_commit=False`. `get_db` yields one `AsyncSession` per request. `/health/db` runs `SELECT 1` and returns 503 on `(SQLAlchemyError, OSError)` with a fixed message.
+- **Rationale:** `pool_pre_ping` drops dead pooled connections, for example after a database restart. `expire_on_commit=False` avoids implicit lazy reloads (`MissingGreenlet`) in async code. The 5 s connect timeout keeps an unreachable host from hanging requests for asyncpg's 60 s default. A refused connection arrives as an unwrapped `OSError` (verified by experiment).
+- **Consequences:** Disposing the engine at shutdown through `lifespan` is deferred (I-10). This matches the team's `get_db` shape, but is async instead of sync.
+- **Scope:** Broadly reusable.
+
+### D-114: Transaction ownership
+- **Status:** Accepted
+- **Date:** 2026-11-06
+- **Context / problem:** Something must decide when a request's changes are committed.
+- **Alternatives:** `get_db` commits automatically after the route; services commit explicitly.
+- **Trade-offs:** Auto-commit is convenient but hides transaction boundaries, can commit after a partially failed operation that was caught, and makes multi-step atomic work implicit. Explicit commits are a little more code but make every transaction boundary visible and testable.
+- **Decision:** `get_db` never commits; closing the session rolls back anything uncommitted. Service functions call `await session.commit()` explicitly at the end of a successful unit of work.
+- **Rationale:** Imports must not leave partial data, and auth flows (OTP verification, password set) need clear, reviewable atomic boundaries.
+- **Consequences:** Every write service must commit. A forgotten commit shows up as data that silently disappears, so tests must assert that data is persisted.
+- **Scope:** Broadly reusable.
+
+
 ---
 
 ## Open decisions
